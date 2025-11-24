@@ -1,0 +1,129 @@
+﻿@page "/"
+@inject SupabaseService Supabase
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<EditForm Model="@loginModel" OnValidSubmit="HandleLogin" FormName="loginform">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6 col-lg-4">
+                <div class="card shadow rounded">
+                    <div class="card-body p-4">
+                        <h3 class="text-center mb-4">Sign In</h3>
+
+                        <div class="mb-3">
+                            <label class="form-label">Email</label>
+                            <InputText class="form-control" @bind-Value="loginModel.Email" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Password</label>
+                            <div class="input-group">
+                                <InputText type="@passwordInputType" class="form-control" @bind-Value="loginModel.Password" />
+                                <button type="button" class="btn btn-outline-secondary" @onclick="TogglePasswordVisibility">
+                                    <i class="bi @(showPassword ? "bi-eye-slash" : "bi-eye")"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100">Sign In</button>
+
+                        <div class="text-center mt-3">
+                            <a href="/signup">Don’t have an account? Sign up</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</EditForm>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3 text-center">@errorMessage</div>
+}
+
+@code {
+    private LoginModel loginModel = new();
+    private string? errorMessage;
+    private bool showPassword = false;
+    private string passwordInputType => showPassword ? "text" : "password";
+
+    private void TogglePasswordVisibility() => showPassword = !showPassword;
+
+    private async Task WaitForAuthHelper()
+    {
+        int tries = 0;
+        while (true)
+        {
+            var exists = await JS.InvokeAsync<bool>("eval", "!!window.authHelper");
+            if (exists) break;
+
+            if (tries++ > 20) throw new Exception("authHelper.js failed to load.");
+
+            await JS.InvokeVoidAsync("eval", @"
+                if (!window.authHelper) {
+                    var script = document.createElement('script');
+                    script.src = 'js/auth.js';
+                    document.body.appendChild(script);
+                }
+            ");
+            await Task.Delay(100);
+        }
+    }
+
+    private async Task HandleLogin()
+    {
+        if (string.IsNullOrWhiteSpace(loginModel.Email) || string.IsNullOrWhiteSpace(loginModel.Password))
+        {
+            errorMessage = "Email and password are required.";
+            return;
+        }
+
+        try
+        {
+            var session = await Supabase.SignInAsync(loginModel.Email, loginModel.Password);
+
+            if (session?.User != null)
+            {
+                var metadata = session.User.UserMetadata;
+
+                var userInfo = new
+                {
+                    Email = session.User.Email,
+                    Id = session.User.Id,
+                    MetaData = metadata
+                };
+
+                var json = System.Text.Json.JsonSerializer.Serialize(userInfo);
+
+                await WaitForAuthHelper();
+
+                await JS.InvokeVoidAsync("authHelper.setUser", json);
+
+                await JS.InvokeVoidAsync("console.log", "🔐 User signed in:", json);
+                Navigation.NavigateTo("/home", forceLoad: true);
+
+               
+            }
+            else
+            {
+                errorMessage = "Invalid login credentials.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Login failed: " + ex.Message;
+        }
+    }
+
+    public class LoginModel
+    {
+        public string? Email { get; set; }
+        public string? Password { get; set; }
+    }
+}

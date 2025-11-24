@@ -1,0 +1,134 @@
+﻿@page "/signup"
+@inject SupabaseService Supabase
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+
+<h3>Sign Up</h3>
+
+<EditForm Model="@signupModel" OnValidSubmit="HandleSignup" FormName="signupform">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6 col-lg-4">
+                <div class="card shadow rounded">
+                    <div class="card-body p-4">
+                        <h3 class="text-center mb-4">Create Account</h3>
+
+                        <div class="mb-3">
+                            <label class="form-label">Name</label>
+                            <InputText class="form-control" @bind-Value="signupModel.Name" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Email</label>
+                            <InputText class="form-control" @bind-Value="signupModel.Email" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Password</label>
+                            <div class="input-group">
+                                <InputText type="@passwordInputType" class="form-control" @bind-Value="signupModel.Password" />
+                                <button type="button" class="btn btn-outline-secondary" @onclick="TogglePasswordVisibility">
+                                    @(showPassword ? "Hide" : "Show")
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Confirm Password</label>
+                            <div class="input-group">
+                                <InputText type="@confirmPasswordInputType" class="form-control" @bind-Value="signupModel.ConfirmPassword" />
+                                <button type="button" class="btn btn-outline-secondary" @onclick="ToggleConfirmPasswordVisibility">
+                                    @(showConfirmPassword ? "Hide" : "Show")
+                                </button>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-success w-100">Sign Up</button>
+
+                        <div class="text-center mt-3">
+                            <a href="/">Already have an account? Login</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</EditForm>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success mt-3">@successMessage</div>
+}
+
+@code {
+    private SignupModel signupModel = new();
+    private string? errorMessage;
+    private string? successMessage;
+
+    // Show/Hide states
+    private bool showPassword = false;
+    private bool showConfirmPassword = false;
+
+    private string passwordInputType => showPassword ? "text" : "password";
+    private string confirmPasswordInputType => showConfirmPassword ? "text" : "password";
+
+    private void TogglePasswordVisibility() => showPassword = !showPassword;
+    private void ToggleConfirmPasswordVisibility() => showConfirmPassword = !showConfirmPassword;
+
+    private async Task HandleSignup()
+    {
+        errorMessage = null;
+        successMessage = null;
+
+        if (string.IsNullOrWhiteSpace(signupModel.Name) || // Check for Name
+            string.IsNullOrWhiteSpace(signupModel.Email) ||
+            string.IsNullOrWhiteSpace(signupModel.Password) ||
+            string.IsNullOrWhiteSpace(signupModel.ConfirmPassword))
+        {
+            errorMessage = "All fields are required.";
+            return;
+        }
+
+        if (signupModel.Password != signupModel.ConfirmPassword)
+        {
+            errorMessage = "Passwords do not match.";
+            return;
+        }
+
+        try
+        {
+            // Pass the Name field to the SupabaseService
+            var user = await Supabase.SignUpAsync(signupModel.Email, signupModel.Password, signupModel.Name);
+
+            if (user != null)
+            {
+                successMessage = "Account created successfully! Please check your email to verify your account.";
+                await Task.Delay(2000);
+                Navigation.NavigateTo("/", forceLoad: true); // redirect to login
+            }
+            else
+            {
+                errorMessage = "Signup failed.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Signup failed: " + ex.Message;
+        }
+    }
+
+    // UPDATED SignupModel with Name property
+    public class SignupModel
+    {
+        public string? Name { get; set; }
+        public string? Email { get; set; }
+        public string? Password { get; set; }
+        public string? ConfirmPassword { get; set; }
+    }
+}

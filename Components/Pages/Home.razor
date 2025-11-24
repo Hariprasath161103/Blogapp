@@ -1,0 +1,856 @@
+﻿@page "/home"
+@rendermode InteractiveServer
+@using Blogapp.Services
+@using Blogapp.Models
+@using Microsoft.AspNetCore.SignalR.Client
+@using System.IO
+@inject MongoBlogService BlogService
+@inject SupabaseService Supabase
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inherits Microsoft.AspNetCore.Components.ComponentBase
+@implements IDisposable
+
+<style>
+	/* Glass Effect */
+	.glass-card {
+		background: rgba(255, 255, 255, 0.7);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		transition: all 0.3s ease-in-out;
+		border-radius: 1rem;
+		overflow: hidden; /* Ensures images stay within rounded corners */
+	}
+
+		.glass-card:hover {
+			transform: translateY(-4px);
+			box-shadow: 0 12px 30px rgba(0,0,0,0.15);
+		}
+
+	/* Gradient Button */
+	.btn-gradient {
+		background: linear-gradient(135deg, #6a11cb, #2575fc);
+		color: white;
+		border: none;
+		transition: 0.3s;
+	}
+
+		.btn-gradient:hover {
+			background: linear-gradient(135deg, #2575fc, #6a11cb);
+			transform: translateY(-2px);
+		}
+
+	/* Blog Image Styling */
+	.blog-image-preview {
+		width: 100%;
+		height: 200px;
+		object-fit: cover;
+		border-bottom: 1px solid rgba(0,0,0,0.05);
+	}
+
+	.blog-image-modal {
+		width: 100%;
+		max-height: 400px;
+		object-fit: cover;
+		border-radius: 0.5rem;
+		margin-bottom: 15px;
+		box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+	}
+
+	/* Like + Comment section styling */
+	.like-comment-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.like-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	/* Comment list */
+	.comment-box {
+		background: #f8f9fa;
+		border-radius: 8px;
+		padding: 8px 12px;
+		margin-bottom: 6px;
+		font-size: 14px;
+	}
+
+	/* User Comment History Styling */
+	.user-comment-history .comment-item {
+		border-left: 4px solid #6a11cb;
+		padding: 10px 15px;
+		background-color: #f0f4ff;
+		margin-bottom: 10px;
+		border-radius: 6px;
+		box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+	}
+
+	.user-comment-history .comment-details {
+		font-size: 12px;
+		color: #555;
+		margin-top: 5px;
+		display: block;
+	}
+
+	/* Sticky Sidebar */
+	.sticky-sidebar {
+		position: sticky;
+		top: 80px;
+	}
+
+	/* Profile Icon Fixed Top-Right */
+	.profile-container {
+		position: fixed;
+		top: 20px;
+		right: 20px;
+		z-index: 1050;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		background: rgba(255,255,255,0.8);
+		backdrop-filter: blur(10px);
+		border-radius: 50px;
+		padding: 8px 14px;
+		box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+	}
+
+	.profile-icon {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		background: linear-gradient(135deg, #6a11cb, #2575fc);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: white;
+		font-weight: bold;
+		cursor: pointer;
+	}
+
+	.profile-name {
+		font-weight: 500;
+		color: #333;
+		font-size: 14px;
+	}
+
+	.toast-container {
+		position: fixed;
+		top: 80px;
+		right: 20px;
+		z-index: 1060;
+	}
+
+	.custom-backdrop {
+		background-color: rgba(0, 0, 0, 0.4);
+	}
+</style>
+
+@if (!string.IsNullOrEmpty(UserName))
+{
+	<div class="profile-container" @onclick="ShowProfileOrLogout" style="cursor:pointer;">
+		<div class="profile-icon">@UserName[0]</div>
+		<span class="profile-name">@UserName</span>
+	</div>
+}
+
+@if (!string.IsNullOrEmpty(notificationMessage))
+{
+	<div class="toast-container">
+		<div class="toast show align-items-center text-white @notificationType border-0" role="alert">
+			<div class="d-flex">
+				<div class="toast-body">
+					@notificationMessage
+				</div>
+				<button type="button" class="btn-close btn-close-white me-2 m-auto" @onclick="HideNotification"></button>
+			</div>
+		</div>
+	</div>
+}
+
+<div class="container py-5">
+	<div class="row justify-content-center">
+		<div class="col-lg-8">
+			<div class="d-flex justify-content-between align-items-center mb-5">
+				<div class="input-group shadow-lg rounded-pill overflow-hidden w-75">
+					<span class="input-group-text bg-white border-0">
+						<i class="bi bi-search text-muted"></i>
+					</span>
+					<input @bind="searchQuery" class="form-control border-0 p-3" placeholder="Search blog posts..." />
+				</div>
+
+				<button class="btn btn-gradient btn-lg rounded-pill shadow-sm px-4" @onclick="ShowPublishModal">
+					<i class="bi bi-plus-circle me-2"></i> Publish
+				</button>
+			</div>
+
+			<h2 class="fw-bold text-center mb-5 text-dark">Recent Blog Posts</h2>
+
+			@if (FilteredBlogs == null)
+			{
+				<div class="alert alert-light border text-center shadow-sm rounded-4 glass-card">
+					<div class="spinner-border text-primary me-2"></div> Loading blogs...
+				</div>
+			}
+			else if (!FilteredBlogs.Any())
+			{
+				<div class="alert alert-light border text-center shadow-sm rounded-4 glass-card">
+					No blog posts found
+				</div>
+			}
+			else
+			{
+				<div class="row g-4">
+					@foreach (var blog in FilteredBlogs.OrderByDescending(b => b.CreatedAt))
+					{
+						<div class="col-12">
+							<div class="card blog-card glass-card border-0 shadow-lg h-100"
+								      @onclick="() => OpenBlog(blog)">
+
+								@if (!string.IsNullOrEmpty(blog.ImageUrl))
+								{
+									<img src="@blog.ImageUrl" class="blog-image-preview" alt="Blog cover" loading="lazy" />
+								}
+
+								<div class="card-body d-flex flex-column p-4">
+									<h5 class="fw-bold text-dark mb-2">@blog.Title</h5>
+
+									<small class=" fw-semibold mb-2 d-block">
+										<i class="bi bi-person-circle me-1"></i> By: @(blog.AuthorEmail?.Split('@')[0] ?? "Unknown Author")
+									</small>
+
+									<p class="text-muted flex-grow-1">
+										@((blog.Content.Length > 120) ? blog.Content.Substring(0, 120) + "..." : blog.Content)
+									</p>
+
+									<div class="like-comment-bar mt-3">
+										<small class="text-secondary">
+											<i class="bi bi-calendar-event me-1"></i>
+											@blog.CreatedAt.ToLocalTime().ToString("dd MMM yyyy, hh:mm tt")
+										</small>
+
+										<button class="btn btn-sm btn-outline-primary rounded-pill like-btn"
+												      @onclick="() => LikeBlog(blog)"
+												      @onclick:stopPropagation="true">
+											<i class="bi bi-hand-thumbs-up"></i> @blog.Likes Likes
+										</button>
+
+									</div>
+								</div>
+							</div>
+						</div>
+					}
+				</div>
+			}
+		</div>
+
+		<div class="col-lg-4">
+			<div class="sticky-sidebar">
+				<h3 class="fw-bold mb-3 text-dark">Blogs from Last 1 Hour</h3>
+
+				@if (LastHourBlogs == null || !LastHourBlogs.Any())
+				{
+					<div class="alert alert-light border text-center shadow-sm rounded-4 glass-card">
+						No blogs in the last hour
+					</div>
+				}
+				else
+				{
+					@foreach (var blog in LastHourBlogs.OrderByDescending(b => b.CreatedAt))
+					{
+						<div class="card blog-card glass-card border-0 shadow-lg rounded-4 mb-3"
+							      @onclick="() => OpenBlog(blog)">
+							<div class="card-body p-3">
+								<h5 class="fw-bold text-dark">@blog.Title</h5>
+
+								<small class="text-info fw-semibold mb-1 d-block">
+									<i class="bi bi-person-circle me-1"></i> By: @(blog.AuthorEmail?.Split('@')[0] ?? "Unknown Author")
+								</small>
+
+								<p class="text-muted fs-7">
+									@((blog.Content.Length > 120) ? blog.Content.Substring(0, 120) + "..." : blog.Content)
+								</p>
+
+								<div class="like-comment-bar mt-2">
+									<small class="text-secondary">
+										<i class="bi bi-calendar-event me-1"></i>
+										@blog.CreatedAt.ToLocalTime().ToString("dd MMM yyyy, hh:mm tt")
+									</small>
+								</div>
+							</div>
+						</div>
+					}
+				}
+			</div>
+		</div>
+	</div>
+</div>
+
+@if (showPublishModal)
+{
+	<div class="modal fade show d-block custom-backdrop">
+		<div class="modal-dialog modal-lg modal-dialog-centered">
+			<div class="modal-content glass-card border-0 shadow-lg rounded-4">
+				<div class="modal-header border-0">
+					<h5 class="modal-title fw-bold">
+						@if (editingBlog != null)
+						{
+							<span>Edit Blog</span>
+						}
+						else
+						{
+							<span>Publish a New Blog</span>
+						}
+					</h5>
+					<button type="button" class="btn-close" @onclick="HidePublishModal"></button>
+				</div>
+				<div class="modal-body p-4">
+
+					<div class="mb-4">
+						<label class="form-label fw-semibold">Cover Image (Max 5MB)</label>
+						<InputFile OnChange="HandleImageUpload" class="form-control mb-2" accept="image/*" />
+
+						@if (isUploading)
+						{
+							<div class="d-flex align-items-center text-primary">
+								<div class="spinner-border spinner-border-sm me-2" role="status"></div>
+								<span>Uploading image to storage...</span>
+							</div>
+						}
+						else if (!string.IsNullOrEmpty(uploadedImageUrl))
+						{
+							<div class="mt-2 position-relative d-inline-block">
+								<img src="@uploadedImageUrl" class="img-thumbnail" style="max-height: 150px;" alt="Preview" />
+								<button class="btn btn-sm btn-danger position-absolute top-0 start-100 translate-middle badge rounded-pill"
+										@onclick="RemoveUploadedImage">
+									X
+								</button>
+							</div>
+						}
+					</div>
+
+					<div class="mb-4">
+						<label class="form-label fw-semibold">Title</label>
+						<input @bind="newTitle" class="form-control form-control-lg rounded-3 shadow-sm"
+							          placeholder="Enter blog title..." />
+					</div>
+
+					<div class="mb-4">
+						<label class="form-label fw-semibold">Content</label>
+						<textarea @bind="newContent" class="form-control rounded-3 shadow-sm"
+								        rows="6" placeholder="Write your blog content..."></textarea>
+					</div>
+				</div>
+				<div class="modal-footer border-0">
+					<button class="btn btn-outline-secondary rounded-pill px-4" @onclick="HidePublishModal">Cancel</button>
+					<button class="btn btn-gradient rounded-pill px-4" @onclick="SaveBlog" disabled="@isUploading">
+						@if (editingBlog != null)
+						{
+							<span>Save Changes</span>
+						}
+						else
+						{
+							<span>Publish</span>
+						}
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+@if (selectedBlog != null)
+{
+	<div class="modal fade show d-block custom-backdrop">
+		<div class="modal-dialog modal-lg modal-dialog-centered">
+			<div class="modal-content glass-card border-0 shadow-lg rounded-4">
+				<div class="modal-header border-0">
+					<h5 class="modal-title fw-bold">@selectedBlog.Title</h5>
+					<button type="button" class="btn-close" @onclick="CloseBlog"></button>
+				</div>
+				<div class="modal-body">
+
+					@if (!string.IsNullOrEmpty(selectedBlog.ImageUrl))
+					{
+						<img src="@selectedBlog.ImageUrl" class="blog-image-modal" alt="Blog Main Image" />
+					}
+
+					<small class="text-info fw-semibold mb-3 d-block">
+						<i class="bi bi-person-circle me-1"></i> Author: @(selectedBlog.AuthorEmail?.Split('@')[0] ?? "Unknown Author")
+					</small>
+
+					<p class="text-muted fs-6" style="white-space: pre-wrap;">@selectedBlog.Content</p>
+
+					<h6 class="mt-4">Comments</h6>
+					@if (selectedBlog.Comments != null && selectedBlog.Comments.Any())
+					{
+						@foreach (var comment in selectedBlog.Comments)
+						{
+							<div class="comment-box">@comment</div>
+						}
+					}
+					else
+					{
+						<p class="text-muted">No comments yet. Be the first!</p>
+					}
+
+					<div class="input-group mt-3">
+						<input type="text" class="form-control" placeholder="Write a comment..." @bind="newComment" />
+						<button class="btn btn-gradient" @onclick="() => AddComment(selectedBlog)">Post</button>
+					</div>
+				</div>
+				<div class="modal-footer border-0">
+					<small class="text-muted me-auto">
+						<i class="bi bi-calendar-event me-1"></i>
+						@selectedBlog.CreatedAt.ToLocalTime().ToString("dd MMM yyyy, hh:mm tt")
+					</small>
+
+					<button class="btn btn-sm btn-outline-primary rounded-pill like-btn me-2"
+							    @onclick="() => LikeBlog(selectedBlog)">
+						<i class="bi bi-hand-thumbs-up"></i> @selectedBlog.Likes Likes
+					</button>
+
+					<button class="btn btn-outline-secondary rounded-pill px-4" @onclick="CloseBlog">Close</button>
+
+					@if (selectedBlog.AuthorEmail == UserEmail)
+					{
+						<button class="btn btn-outline-danger rounded-pill px-4" @onclick="() => RemoveBlog(selectedBlog)">
+							<i class="bi bi-trash me-1"></i> Delete
+						</button>
+						<button class="btn btn-outline-warning rounded-pill px-4" @onclick="() => EditBlog(selectedBlog)">
+							<i class="bi bi-pencil me-1"></i> Edit
+						</button>
+					}
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+@if (showProfileModal)
+{
+	<div class="modal fade show d-block custom-backdrop" tabindex="-1">
+		<div class="modal-dialog modal-lg modal-dialog-centered">
+			<div class="modal-content glass-card border-0 shadow-lg rounded-4">
+				<div class="modal-header border-0">
+					<h5 class="modal-title fw-bold">✍️ @UserName's Author Dashboard</h5>
+					<button type="button" class="btn-close" @onclick="HideProfileModal"></button>
+				</div>
+				<div class="modal-body p-4">
+					<div class="mb-4 pb-3 border-bottom">
+						<h6 class="fw-semibold">Registered Email:</h6>
+						<p class="text-muted">@UserEmail</p>
+						<h6 class="fw-semibold">Blogs Authored:</h6>
+						<p class="text-muted">@GetUserAuthoredBlogs().Count()</p>
+					</div>
+
+					<h6 class="fw-semibold mb-3">Comments Received on Your Blogs (@GetCommentsOnAuthoredBlogs().Count())</h6>
+
+					@if (GetCommentsOnAuthoredBlogs().Any())
+					{
+						<div class="user-comment-history overflow-auto" style="max-height: 400px;">
+							@foreach (var activity in GetCommentsOnAuthoredBlogs())
+							{
+								<div class="comment-item">
+									<p class="mb-0">
+										<span class="fw-bold text-primary">@activity.CommenterIdentifier</span> commented:
+										<span class="text-dark">@activity.Comment</span>
+									</p>
+									<span class="comment-details">
+										On your blog: **@activity.BlogTitle**
+									</span>
+								</div>
+							}
+						</div>
+					}
+					else
+					{
+						<div class="alert alert-info rounded-3">No one has commented on your blogs yet.</div>
+					}
+				</div>
+				<div class="modal-footer border-0">
+					<button class="btn btn-outline-danger rounded-pill px-4" @onclick="Logout">
+						<i class="bi bi-box-arrow-right me-2"></i>Logout
+					</button>
+					<button class="btn btn-outline-secondary rounded-pill px-4" @onclick="HideProfileModal">Close</button>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+@code {
+	// --- SignalR, State, and Injection ---
+	private HubConnection? hubConnection;
+
+	// --- Existing State ---
+	string? UserName;
+	string? UserEmail;
+	string newTitle = "";
+	string newContent = "";
+	string newComment = "";
+	string searchQuery = "";
+	BlogPost? editingBlog;
+
+	// --- Image Upload State ---
+	string? uploadedImageUrl = "";
+	bool isUploading = false;
+	long maxFileSize = 1024 * 1024 * 5; // 5MB limit
+
+	List<BlogPost> blogs = new();
+	BlogPost? selectedBlog;
+	bool showPublishModal = false;
+
+	// NEW: State for Profile Modal
+	bool showProfileModal = false;
+
+	string notificationMessage = "";
+	string notificationType = "bg-success";
+	// ------------------------------------
+
+	IEnumerable<BlogPost> FilteredBlogs =>
+	string.IsNullOrWhiteSpace(searchQuery)
+	? blogs
+	: blogs.Where(b =>
+	 b.Title.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+	 b.Content.Contains(searchQuery, StringComparison.OrdinalIgnoreCase));
+
+	IEnumerable<BlogPost> LastHourBlogs =>
+	 blogs.Where(b => b.CreatedAt >= DateTime.UtcNow.AddHours(-1));
+
+	// Helper class to structure comment data received on authored blogs
+	private class AuthorCommentActivity
+	{
+		public string BlogTitle { get; set; } = string.Empty;
+		public string CommenterIdentifier { get; set; } = string.Empty;
+		public string Comment { get; set; } = string.Empty;
+	}
+
+	// NEW: Logic to filter blogs written by the current user.
+	private IEnumerable<BlogPost> GetUserAuthoredBlogs()
+	{
+		if (string.IsNullOrEmpty(UserEmail)) return Enumerable.Empty<BlogPost>();
+
+		return blogs.Where(b => b.AuthorEmail != null && b.AuthorEmail.Equals(UserEmail, StringComparison.OrdinalIgnoreCase));
+	}
+
+	// NEW: Logic to extract comments left by OTHERS on the current user's blogs.
+	private IEnumerable<AuthorCommentActivity> GetCommentsOnAuthoredBlogs()
+	{
+		var commentsActivity = new List<AuthorCommentActivity>();
+		var authoredBlogs = GetUserAuthoredBlogs();
+
+		if (!authoredBlogs.Any()) return Enumerable.Empty<AuthorCommentActivity>();
+
+		// The identifier used when saving a comment (e.g., "UserName: comment text")
+		string userIdentifier = UserName ?? UserEmail ?? "";
+
+		foreach (var blog in authoredBlogs)
+		{
+			if (blog.Comments != null)
+			{
+				foreach (var rawComment in blog.Comments)
+				{
+					// Split the comment string to find the identifier (name/email)
+					var parts = rawComment.Split(new[] { ':' }, 2, StringSplitOptions.None);
+					string identifier = parts.Length > 0 ? parts[0].Trim() : "Anonymous";
+					string commentText = parts.Length > 1 ? parts[1].Trim() : rawComment;
+
+					// Check if the identifier is NOT the current user's identifier
+					bool isOwnComment = identifier.Equals(userIdentifier, StringComparison.OrdinalIgnoreCase);
+
+					// Also check if the commenter's email/name matches the author email exactly (less likely, but a safety check)
+					if (!isOwnComment && !identifier.Equals(blog.AuthorEmail, StringComparison.OrdinalIgnoreCase))
+					{
+						commentsActivity.Add(new AuthorCommentActivity
+						{
+							BlogTitle = blog.Title,
+							CommenterIdentifier = identifier,
+							Comment = commentText
+						});
+					}
+				}
+			}
+		}
+
+		// Order the activity by the blog title
+		return commentsActivity.OrderByDescending(c => c.BlogTitle);
+	}
+
+
+	protected override async Task OnInitializedAsync()
+	{
+		blogs = await BlogService.GetBlogsAsync();
+		await LoadUserEmailFromLocalStorage();
+		await StartHubConnection();
+	}
+
+	private async Task StartHubConnection()
+	{
+		hubConnection = new HubConnectionBuilder()
+		 .WithUrl(Navigation.ToAbsoluteUri("/commentHub"))
+				.WithAutomaticReconnect()
+		 .Build();
+
+		hubConnection.On<string, string>("ReceiveNotification", async (targetEmail, message) =>
+		{
+			await InvokeAsync(() =>
+			{
+				if (!string.IsNullOrEmpty(UserEmail) && UserEmail.Equals(targetEmail, StringComparison.OrdinalIgnoreCase))
+				{
+					ShowNotification(message, "bg-info text-dark");
+				}
+				StateHasChanged();
+			});
+		});
+
+		try
+		{
+			await hubConnection.StartAsync();
+		}
+		catch (Exception ex)
+		{
+			Console.WriteLine($"Error starting SignalR connection: {ex.Message}");
+		}
+	}
+
+	public void Dispose()
+	{
+		_ = hubConnection?.DisposeAsync();
+	}
+
+	private async Task LoadUserEmailFromLocalStorage()
+	{
+		try
+		{
+			var json = await JS.InvokeAsync<string>("localStorage.getItem", "user");
+			if (!string.IsNullOrEmpty(json))
+			{
+				using var doc = System.Text.Json.JsonDocument.Parse(json);
+				var root = doc.RootElement;
+
+				if (root.TryGetProperty("MetaData", out var meta) && meta.TryGetProperty("name", out var nameProp))
+				{
+					UserName = nameProp.GetString();
+				}
+
+				if (root.TryGetProperty("Email", out var emailProp))
+				{
+					UserEmail = emailProp.GetString();
+					if (string.IsNullOrEmpty(UserName))
+						UserName = UserEmail?.Split('@')[0] ?? "User";
+				}
+			}
+		}
+		catch
+		{
+			UserEmail = null;
+			UserName = null;
+		}
+	}
+
+	private async Task ShowProfileOrLogout()
+	{
+		ShowProfileModal();
+	}
+
+	void ShowProfileModal() => showProfileModal = true;
+	void HideProfileModal() => showProfileModal = false;
+
+
+	void ShowPublishModal()
+	{
+		newTitle = "";
+		newContent = "";
+		uploadedImageUrl = ""; // Reset image for new post
+		editingBlog = null;
+		showPublishModal = true;
+	}
+
+	void HidePublishModal()
+	{
+		showPublishModal = false;
+		editingBlog = null;
+	}
+
+	// --- NEW: Image Upload Logic ---
+	private async Task HandleImageUpload(InputFileChangeEventArgs e)
+	{
+		var file = e.File;
+		if (file == null) return;
+
+		isUploading = true;
+		StateHasChanged();
+
+		try
+		{
+			if (file.Size > maxFileSize)
+			{
+				ShowNotification("Image too large. Max 5MB allowed.", "bg-danger");
+				isUploading = false;
+				return;
+			}
+
+			// Open stream and upload via SupabaseService
+			using var stream = file.OpenReadStream(maxFileSize);
+
+			// Assuming SupabaseService has an UploadImageAsync method
+			// Call the updated Supabase service
+			var url = await Supabase.UploadImageAsync(stream, file.Name);
+
+			// CHECK IF THE RESULT IS AN ERROR MESSAGE
+			if (!string.IsNullOrEmpty(url) && !url.StartsWith("Error:"))
+			{
+				uploadedImageUrl = url;
+				ShowNotification("Image uploaded successfully!", "bg-success");
+			}
+			else
+			{
+				// Show the specific error from Supabase
+				ShowNotification(url ?? "Unknown upload error", "bg-danger");
+			}
+		}
+		catch (Exception ex)
+		{
+			ShowNotification($"Upload error: {ex.Message}", "bg-danger");
+		}
+		finally
+		{
+			isUploading = false;
+			StateHasChanged();
+		}
+	}
+
+	private void RemoveUploadedImage()
+	{
+		uploadedImageUrl = null;
+	}
+
+	async Task SaveBlog()
+	{
+		if (string.IsNullOrWhiteSpace(newTitle) || string.IsNullOrWhiteSpace(newContent))
+		{
+			ShowNotification("Please fill in both title and content.", "bg-danger");
+			return;
+		}
+
+		if (editingBlog != null)
+		{
+			// EDIT EXISTING BLOG
+			editingBlog.Title = newTitle;
+			editingBlog.Content = newContent;
+			editingBlog.ImageUrl = uploadedImageUrl; // Save the new (or existing) image URL
+
+			await BlogService.UpdateBlogAsync(editingBlog.Id, editingBlog);
+			ShowNotification("Blog updated successfully!", "bg-warning");
+
+			if (selectedBlog?.Id == editingBlog.Id)
+			{
+				selectedBlog = editingBlog;
+			}
+		}
+		else
+		{
+			// ADD NEW BLOG
+			var newBlog = new BlogPost
+			{
+				Title = newTitle,
+				Content = newContent,
+				ImageUrl = uploadedImageUrl, // Save the image URL
+				CreatedAt = DateTime.UtcNow,
+				Likes = 0,
+				Comments = new List<string>(),
+				AuthorEmail = UserEmail
+			};
+
+			await BlogService.AddBlogAsync(newBlog);
+			ShowNotification("Blog published successfully!", "bg-success");
+		}
+
+		// Refresh list and cleanup
+		blogs = await BlogService.GetBlogsAsync();
+		newTitle = newContent = "";
+		uploadedImageUrl = "";
+		showPublishModal = false;
+		editingBlog = null;
+	}
+
+	async Task RemoveBlog(BlogPost blog)
+	{
+		await BlogService.DeleteBlogAsync(blog.Id);
+		blogs = await BlogService.GetBlogsAsync();
+		selectedBlog = null;
+		ShowNotification("Blog deleted successfully", "bg-danger");
+	}
+
+	private async Task Logout()
+	{
+		await JS.InvokeVoidAsync("localStorage.removeItem", "user");
+		await JS.InvokeVoidAsync("localStorage.removeItem", "username");
+
+		Navigation.NavigateTo("/", true);
+	}
+
+	void OpenBlog(BlogPost blog) => selectedBlog = blog;
+	void CloseBlog() => selectedBlog = null;
+
+	async Task LikeBlog(BlogPost blog)
+	{
+		await BlogService.IncrementLikeAsync(blog.Id);
+		blogs = await BlogService.GetBlogsAsync();
+		if (selectedBlog != null)
+			selectedBlog = blogs.FirstOrDefault(b => b.Id == blog.Id);
+		ShowNotification($"You liked '{blog.Title}'", "bg-info");
+	}
+
+	async Task AddComment(BlogPost blog)
+	{
+		if (string.IsNullOrWhiteSpace(newComment)) return;
+
+		string commentWithUser = $"{UserName ?? UserEmail}: {newComment}";
+
+		await BlogService.AddCommentAsync(blog.Id, commentWithUser);
+
+		if (hubConnection?.State == HubConnectionState.Connected)
+		{
+			await hubConnection.SendAsync("NotifyAuthor", blog.AuthorEmail, $"A new comment was posted on your blog: '{blog.Title}' by {UserName ?? "a user"}");
+		}
+
+		blogs = await BlogService.GetBlogsAsync();
+		selectedBlog = blogs.FirstOrDefault(b => b.Id == blog.Id);
+		newComment = "";
+		ShowNotification("Comment added", "bg-success");
+	}
+
+	void ShowNotification(string message, string type = "bg-success", int duration = 3000)
+	{
+		notificationMessage = message;
+		notificationType = type;
+		StateHasChanged();
+
+		_ = Task.Run(async () =>
+		{
+			await Task.Delay(duration);
+			await InvokeAsync(() =>
+			{
+				notificationMessage = "";
+				StateHasChanged();
+			});
+		});
+	}
+
+	void HideNotification() => notificationMessage = "";
+
+	void EditBlog(BlogPost blog)
+	{
+		newTitle = blog.Title;
+		newContent = blog.Content;
+		uploadedImageUrl = blog.ImageUrl; // Pre-fill the image if editing
+		editingBlog = blog;
+		selectedBlog = null;
+		showPublishModal = true;
+	}
+}
